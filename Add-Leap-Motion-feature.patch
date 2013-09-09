@@ -1,0 +1,698 @@
+From 40dbfb01198a8fd66085ec4ff433fd9ae575d0b3 Mon Sep 17 00:00:00 2001
+From: Masahide Sakamaki <yasami@falys.com>
+Date: Mon, 9 Sep 2013 22:00:54 +0900
+Subject: [PATCH] Add Leap Motion feature
+
+---
+ LEAPMOTION/WINDOWS/leappgen.cpp        | 178 ++++++++++++++++++++++++++++
+ LEAPMOTION/WINDOWS/leappgen.h          |  38 ++++++
+ WINDOWS/MSVC/PUTTYGEN/PUTTYGEN.sln     |  20 ++++
+ WINDOWS/MSVC/PUTTYGEN/PUTTYGEN.vcxproj | 206 +++++++++++++++++++++++++++++++++
+ WINDOWS/WINCTRLS.C                     |   6 +-
+ WINDOWS/WINPGEN.C                      | 115 +++++++++++++++++-
+ WINDOWS/WINSTUFF.H                     |   2 +-
+ 7 files changed, 560 insertions(+), 5 deletions(-)
+ create mode 100644 LEAPMOTION/WINDOWS/leappgen.cpp
+ create mode 100644 LEAPMOTION/WINDOWS/leappgen.h
+ create mode 100644 WINDOWS/MSVC/PUTTYGEN/PUTTYGEN.sln
+ create mode 100644 WINDOWS/MSVC/PUTTYGEN/PUTTYGEN.vcxproj
+
+diff --git a/LEAPMOTION/WINDOWS/leappgen.cpp b/LEAPMOTION/WINDOWS/leappgen.cpp
+new file mode 100644
+index 0000000..f8ebbfd
+--- /dev/null
++++ b/LEAPMOTION/WINDOWS/leappgen.cpp
+@@ -0,0 +1,178 @@
++#include "leappgen.h"
++
++#include <Leap.h>
++#include <iostream>
++#include <Windows.h>
++#include <thread>
++#include <mutex>
++
++#include "../../misc.h"
++
++using namespace Leap;
++
++class PGenListener : public Leap::Listener {
++public:
++	PGenListener() : 
++		m_frameCounter(0), m_hwnd(0), m_frameId(0), m_started(true) {}
++	
++	virtual void onInit(const Leap::Controller&) { 
++#ifdef _DEBUG
++		std::cout << __FUNCTION__ << std::endl;
++#endif
++	}
++
++	virtual void onConnect(const Leap::Controller&){  
++#ifdef _DEBUG
++		std::cout << __FUNCTION__ << std::endl;
++#endif
++	}
++
++	virtual void onDisconnect(const Leap::Controller&){ 
++#ifdef _DEBUG
++		std::cout << __FUNCTION__ << std::endl;
++#endif
++	}
++
++	virtual void onExit(const Leap::Controller&){ 
++#ifdef _DEBUG
++		std::cout << __FUNCTION__ << std::endl;
++#endif
++	}
++
++	virtual void onFrame(const Leap::Controller& controller){
++		std::lock_guard<std::mutex> lock(m_mutex);
++		if (!m_started)
++			return;
++
++		if (m_frameId)
++			return;
++
++		const Leap::Frame frame = controller.frame();
++		auto  screen = controller.locatedScreens()[0];
++		const Leap::FingerList fingers = frame.fingers();
++		LeapFingers lf;
++		lf.count = fingers.count();
++		if (lf.count == 0)
++		    return;
++
++		int fingerCount = min(lf.count, 10);
++		for (int i = 0; i < fingerCount; ++i) {
++			Leap::Finger finger = fingers[i];
++			Leap::Vector position = finger.tipPosition();
++			Leap::Vector projected = screen.project(position, true, 1.0);
++			byte x = static_cast<int>(position.x * 10) & 0xFF;
++			byte y = static_cast<int>(position.y * 10) & 0xFF;
++			byte z = static_cast<int>(position.z * 10) & 0xFF;
++			int reduced = x & 0xFF;
++			reduced |= (y & 0xFF) << 8;
++			reduced |= (z & 0xFF) << 16;
++			reduced |= (finger.id() & 0xFF) << 24;
++			lf.data[i].reduced = reduced;
++			lf.data[i].x = projected.x;
++			lf.data[i].y = projected.y;
++			lf.data[i].z = projected.z;
++			lf.data[i]._x = position.x;
++			lf.data[i]._y = position.y;
++			lf.data[i]._z = position.z;
++			lf.data[i].ix = x;
++			lf.data[i].iy = y;
++			lf.data[i].iz = z;
++		}
++		m_fingers = lf;
++		m_frameId = frame.id();
++		PostMessage(m_hwnd, WM_LEAP_MOVED, 0, 0);
++	}
++
++	virtual void onFocusGained(const Leap::Controller&){
++#ifdef _DEBUG
++		std::cout << __FUNCTION__ << std::endl;
++#endif
++	}
++
++	virtual void onFocusLost(const Leap::Controller&){
++#ifdef _DEBUG
++		std::cout << __FUNCTION__ << std::endl;
++#endif
++	}
++
++	void setWindow(HWND hwnd) {
++		m_hwnd = hwnd;
++	}
++	
++	void getFingers(LeapFingers *fingers) {
++		std::lock_guard<std::mutex> lock(m_mutex);
++		if (m_frameId == 0)
++			return;
++		
++		*fingers = m_fingers;
++		m_frameId = 0;
++	}
++
++	void  start() {
++		std::lock_guard<std::mutex> lock(m_mutex);
++		m_frameId = 0;
++		m_started = true;
++	}
++
++	void stop() {
++		m_started = false;
++	}
++
++	static Leap::Controller& getController() 
++	{
++		static Leap::Controller s_controller;
++		return  s_controller;
++	}
++
++	static PGenListener& getLitener()
++	{
++		static PGenListener s_listener;
++		return s_listener;
++	}
++private:
++	int m_frameCounter;
++	HWND m_hwnd;
++	volatile int64_t m_frameId;
++	volatile bool m_started;
++	LeapFingers m_fingers;
++	std::mutex m_mutex;
++};
++
++void initializeLeap(HWND hwnd) {
++	PGenListener& listener  = PGenListener::getLitener();
++	listener.setWindow(hwnd);
++
++#ifdef _DEBUG
++	AllocConsole();
++	FILE *fp;
++	freopen ( "CONOUT$", "w", stdout ); 
++#endif
++}
++
++int getFingers(__inout LeapFingers *fingers){
++
++	PGenListener& listener  = PGenListener::getLitener();
++	listener.getFingers(fingers);
++	return fingers->count;
++}
++
++void startLeap() {
++	PGenListener& listener  = PGenListener::getLitener();
++	Leap::Controller& controller = PGenListener::getController();
++	controller.addListener(listener);
++	std::cout << controller.isConnected() << std::endl;
++	listener.start();
++}
++
++void stopLeap() {
++	Leap::Controller& controller = PGenListener::getController();
++	PGenListener& listener  = PGenListener::getLitener();
++	listener.stop();
++	controller.removeListener(listener);
++}
++
++void releaseLeap() {
++#ifdef _DEBUG
++	FreeConsole();
++#endif
++}
+diff --git a/LEAPMOTION/WINDOWS/leappgen.h b/LEAPMOTION/WINDOWS/leappgen.h
+new file mode 100644
+index 0000000..a75c049
+--- /dev/null
++++ b/LEAPMOTION/WINDOWS/leappgen.h
+@@ -0,0 +1,38 @@
++#ifndef LEAP_GEN_H
++#define LEAP_GEN_H
++
++#include <Windows.h>
++
++#ifdef __cplusplus
++extern "C" {
++#endif
++#define WM_LEAP_MOVED	(WM_APP + 1000)
++
++	typedef struct _LeapPosition {
++		int reduced;
++		float x;
++		float y;
++		float z;
++		float _x;
++		float _y;
++		float _z;
++		int ix;
++		int iy;
++		int iz;
++	} LeapPosition;
++
++	typedef struct _LeapFingers {
++		int count;
++		LeapPosition data[10];
++	} LeapFingers;
++
++	void initializeLeap(__in HWND hwnd);
++	int getFingers(__inout LeapFingers *fingers);
++	void startLeap();
++	void stopLeap();
++	void releaseLeap();
++#ifdef __cplusplus
++}
++#endif
++
++#endif
+\ No newline at end of file
+diff --git a/WINDOWS/MSVC/PUTTYGEN/PUTTYGEN.sln b/WINDOWS/MSVC/PUTTYGEN/PUTTYGEN.sln
+new file mode 100644
+index 0000000..3bd75e5
+--- /dev/null
++++ b/WINDOWS/MSVC/PUTTYGEN/PUTTYGEN.sln
+@@ -0,0 +1,20 @@
++﻿
++Microsoft Visual Studio Solution File, Format Version 12.00
++# Visual Studio Express 2012 for Windows Desktop
++Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "PUTTYGEN", "PUTTYGEN.vcxproj", "{1E74693F-C0A9-4392-8440-49554E95442F}"
++EndProject
++Global
++	GlobalSection(SolutionConfigurationPlatforms) = preSolution
++		Debug|Win32 = Debug|Win32
++		Release|Win32 = Release|Win32
++	EndGlobalSection
++	GlobalSection(ProjectConfigurationPlatforms) = postSolution
++		{1E74693F-C0A9-4392-8440-49554E95442F}.Debug|Win32.ActiveCfg = Debug|Win32
++		{1E74693F-C0A9-4392-8440-49554E95442F}.Debug|Win32.Build.0 = Debug|Win32
++		{1E74693F-C0A9-4392-8440-49554E95442F}.Release|Win32.ActiveCfg = Release|Win32
++		{1E74693F-C0A9-4392-8440-49554E95442F}.Release|Win32.Build.0 = Release|Win32
++	EndGlobalSection
++	GlobalSection(SolutionProperties) = preSolution
++		HideSolutionNode = FALSE
++	EndGlobalSection
++EndGlobal
+diff --git a/WINDOWS/MSVC/PUTTYGEN/PUTTYGEN.vcxproj b/WINDOWS/MSVC/PUTTYGEN/PUTTYGEN.vcxproj
+new file mode 100644
+index 0000000..68bc223
+--- /dev/null
++++ b/WINDOWS/MSVC/PUTTYGEN/PUTTYGEN.vcxproj
+@@ -0,0 +1,206 @@
++﻿<?xml version="1.0" encoding="utf-8"?>
++<Project DefaultTargets="Build" ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
++  <ItemGroup Label="ProjectConfigurations">
++    <ProjectConfiguration Include="Debug|Win32">
++      <Configuration>Debug</Configuration>
++      <Platform>Win32</Platform>
++    </ProjectConfiguration>
++    <ProjectConfiguration Include="Release|Win32">
++      <Configuration>Release</Configuration>
++      <Platform>Win32</Platform>
++    </ProjectConfiguration>
++  </ItemGroup>
++  <PropertyGroup Label="Globals">
++    <SccProjectName />
++    <SccLocalPath />
++    <ProjectGuid>{1E74693F-C0A9-4392-8440-49554E95442F}</ProjectGuid>
++  </PropertyGroup>
++  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
++  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'" Label="Configuration">
++    <ConfigurationType>Application</ConfigurationType>
++    <PlatformToolset>v110</PlatformToolset>
++    <UseOfMfc>false</UseOfMfc>
++    <CharacterSet>MultiByte</CharacterSet>
++  </PropertyGroup>
++  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" Label="Configuration">
++    <ConfigurationType>Application</ConfigurationType>
++    <PlatformToolset>v110</PlatformToolset>
++    <UseOfMfc>false</UseOfMfc>
++    <CharacterSet>MultiByte</CharacterSet>
++  </PropertyGroup>
++  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
++  <ImportGroup Label="ExtensionSettings">
++  </ImportGroup>
++  <ImportGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'" Label="PropertySheets">
++    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
++    <Import Project="$(VCTargetsPath)Microsoft.Cpp.UpgradeFromVC60.props" />
++  </ImportGroup>
++  <ImportGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" Label="PropertySheets">
++    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
++    <Import Project="$(VCTargetsPath)Microsoft.Cpp.UpgradeFromVC60.props" />
++  </ImportGroup>
++  <PropertyGroup Label="UserMacros" />
++  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
++    <OutDir>.\Debug\</OutDir>
++    <IntDir>.\Debug\</IntDir>
++    <LinkIncremental>true</LinkIncremental>
++  </PropertyGroup>
++  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
++    <OutDir>.\Release\</OutDir>
++    <IntDir>.\Release\</IntDir>
++    <LinkIncremental>false</LinkIncremental>
++  </PropertyGroup>
++  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
++    <ClCompile>
++      <RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>
++      <InlineFunctionExpansion>Default</InlineFunctionExpansion>
++      <FunctionLevelLinking>false</FunctionLevelLinking>
++      <Optimization>Disabled</Optimization>
++      <SuppressStartupBanner>true</SuppressStartupBanner>
++      <WarningLevel>Level3</WarningLevel>
++      <MinimalRebuild>true</MinimalRebuild>
++      <DebugInformationFormat>EditAndContinue</DebugInformationFormat>
++      <PreprocessorDefinitions>WIN32;SECURITY_WIN32;_DEBUG;_WINDOWS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
++      <AssemblerListingLocation>.\Debug\</AssemblerListingLocation>
++      <PrecompiledHeaderOutputFile>.\Debug\PUTTYGEN.pch</PrecompiledHeaderOutputFile>
++      <ObjectFileName>.\Debug\</ObjectFileName>
++      <ProgramDataBaseFileName>.\Debug\</ProgramDataBaseFileName>
++      <BasicRuntimeChecks>EnableFastChecks</BasicRuntimeChecks>
++      <AdditionalIncludeDirectories>..\..\..\./;..\..\..\charset/;..\..\..\windows/;..\..\..\unix/;..\..\..\macosx/;$(LEAP_SDK)\include/;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
++    </ClCompile>
++    <Midl>
++      <SuppressStartupBanner>true</SuppressStartupBanner>
++      <PreprocessorDefinitions>_DEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
++      <TypeLibraryName>.\Debug\PUTTYGEN.tlb</TypeLibraryName>
++      <MkTypLibCompatible>true</MkTypLibCompatible>
++      <TargetEnvironment>Win32</TargetEnvironment>
++    </Midl>
++    <ResourceCompile>
++      <Culture>0x0809</Culture>
++      <PreprocessorDefinitions>_DEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
++    </ResourceCompile>
++    <Bscmake>
++      <SuppressStartupBanner>true</SuppressStartupBanner>
++      <OutputFile>.\Debug\PUTTYGEN.bsc</OutputFile>
++    </Bscmake>
++    <Link>
++      <SuppressStartupBanner>true</SuppressStartupBanner>
++      <GenerateDebugInformation>true</GenerateDebugInformation>
++      <SubSystem>Windows</SubSystem>
++      <OutputFile>.\Debug\PUTTYGEN.exe</OutputFile>
++      <AdditionalDependencies>leap.lib;comctl32.lib;imm32.lib;winmm.lib;%(AdditionalDependencies)</AdditionalDependencies>
++      <AdditionalLibraryDirectories>$(LEAP_SDK)\lib\x86;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
++    </Link>
++    <PostBuildEvent>
++      <Command>COPY $(LEAP_SDK)\lib\x86\Leapd.dll  $(OutDir)</Command>
++    </PostBuildEvent>
++    <Manifest>
++      <SuppressStartupBanner>false</SuppressStartupBanner>
++    </Manifest>
++  </ItemDefinitionGroup>
++  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
++    <ClCompile>
++      <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
++      <InlineFunctionExpansion>Default</InlineFunctionExpansion>
++      <StringPooling>true</StringPooling>
++      <FunctionLevelLinking>true</FunctionLevelLinking>
++      <Optimization>MaxSpeed</Optimization>
++      <SuppressStartupBanner>true</SuppressStartupBanner>
++      <WarningLevel>Level3</WarningLevel>
++      <PreprocessorDefinitions>WIN32;SECURITY_WIN32;NDEBUG;_WINDOWS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
++      <AssemblerListingLocation>.\Release\</AssemblerListingLocation>
++      <PrecompiledHeaderOutputFile>.\Release\PUTTYGEN.pch</PrecompiledHeaderOutputFile>
++      <ObjectFileName>.\Release\</ObjectFileName>
++      <ProgramDataBaseFileName>.\Release\</ProgramDataBaseFileName>
++      <AdditionalIncludeDirectories>..\..\..\./;..\..\..\charset/;..\..\..\windows/;..\..\..\unix/;..\..\..\macosx/;$(LEAP_SDK)\include/;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
++    </ClCompile>
++    <Midl>
++      <SuppressStartupBanner>true</SuppressStartupBanner>
++      <PreprocessorDefinitions>NDEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
++      <TypeLibraryName>.\Release\PUTTYGEN.tlb</TypeLibraryName>
++      <MkTypLibCompatible>true</MkTypLibCompatible>
++      <TargetEnvironment>Win32</TargetEnvironment>
++    </Midl>
++    <ResourceCompile>
++      <Culture>0x0809</Culture>
++      <PreprocessorDefinitions>NDEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
++    </ResourceCompile>
++    <Bscmake>
++      <SuppressStartupBanner>true</SuppressStartupBanner>
++      <OutputFile>.\Release\PUTTYGEN.bsc</OutputFile>
++    </Bscmake>
++    <Link>
++      <SuppressStartupBanner>true</SuppressStartupBanner>
++      <SubSystem>Windows</SubSystem>
++      <OutputFile>.\Release\PUTTYGEN.exe</OutputFile>
++      <AdditionalDependencies>leap.lib;comctl32.lib;imm32.lib;winmm.lib;%(AdditionalDependencies)</AdditionalDependencies>
++      <AdditionalLibraryDirectories>$(LEAP_SDK)\lib\x86;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
++    </Link>
++    <PostBuildEvent>
++      <Command>COPY $(LEAP_SDK)\lib\x86\Leap.dll  $(OutDir)</Command>
++    </PostBuildEvent>
++  </ItemDefinitionGroup>
++  <ItemGroup>
++    <ClCompile Include="..\..\..\conf.c" />
++    <ClCompile Include="..\..\..\import.c" />
++    <ClCompile Include="..\..\..\LEAPMOTION\WINDOWS\leappgen.cpp" />
++    <ClCompile Include="..\..\..\misc.c" />
++    <ClCompile Include="..\..\..\notiming.c" />
++    <ClCompile Include="..\..\..\sshaes.c" />
++    <ClCompile Include="..\..\..\sshbn.c" />
++    <ClCompile Include="..\..\..\sshdes.c" />
++    <ClCompile Include="..\..\..\sshdss.c" />
++    <ClCompile Include="..\..\..\sshdssg.c" />
++    <ClCompile Include="..\..\..\sshmd5.c" />
++    <ClCompile Include="..\..\..\sshprime.c" />
++    <ClCompile Include="..\..\..\sshpubk.c" />
++    <ClCompile Include="..\..\..\sshrand.c" />
++    <ClCompile Include="..\..\..\sshrsa.c" />
++    <ClCompile Include="..\..\..\sshrsag.c" />
++    <ClCompile Include="..\..\..\sshsh256.c" />
++    <ClCompile Include="..\..\..\sshsh512.c" />
++    <ClCompile Include="..\..\..\sshsha.c" />
++    <ClCompile Include="..\..\..\tree234.c" />
++    <ClCompile Include="..\..\..\version.c" />
++    <ClCompile Include="..\..\winctrls.c" />
++    <ClCompile Include="..\..\winhelp.c" />
++    <ClCompile Include="..\..\winmisc.c" />
++    <ClCompile Include="..\..\winnoise.c" />
++    <ClCompile Include="..\..\winnojmp.c" />
++    <ClCompile Include="..\..\winpgen.c" />
++    <ClCompile Include="..\..\winstore.c" />
++    <ClCompile Include="..\..\wintime.c" />
++    <ClCompile Include="..\..\winutils.c" />
++  </ItemGroup>
++  <ItemGroup>
++    <ClInclude Include="..\..\..\charset\charset.h" />
++    <ClInclude Include="..\..\..\dialog.h" />
++    <ClInclude Include="..\..\..\int64.h" />
++    <ClInclude Include="..\..\..\LEAPMOTION\WINDOWS\leappgen.h" />
++    <ClInclude Include="..\..\..\macosx\osx.h" />
++    <ClInclude Include="..\..\..\misc.h" />
++    <ClInclude Include="..\..\..\network.h" />
++    <ClInclude Include="..\..\..\putty.h" />
++    <ClInclude Include="..\..\..\puttymem.h" />
++    <ClInclude Include="..\..\..\puttyps.h" />
++    <ClInclude Include="..\..\..\ssh.h" />
++    <ClInclude Include="..\..\..\storage.h" />
++    <ClInclude Include="..\..\..\tree234.h" />
++    <ClInclude Include="..\..\..\unix\unix.h" />
++    <ClInclude Include="..\..\rcstuff.h" />
++    <ClInclude Include="..\..\winhelp.h" />
++    <ClInclude Include="..\..\winstuff.h" />
++  </ItemGroup>
++  <ItemGroup>
++    <Image Include="..\..\puttygen.ico" />
++  </ItemGroup>
++  <ItemGroup>
++    <ResourceCompile Include="..\..\puttygen.rc">
++      <AdditionalIncludeDirectories Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">\Tools\putty-src\windows;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
++      <AdditionalIncludeDirectories Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">\Tools\putty-src\windows;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
++    </ResourceCompile>
++  </ItemGroup>
++  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
++  <ImportGroup Label="ExtensionTargets">
++  </ImportGroup>
++</Project>
+\ No newline at end of file
+diff --git a/WINDOWS/WINCTRLS.C b/WINDOWS/WINCTRLS.C
+index 49c13e8..ae9e7dc 100644
+--- a/WINDOWS/WINCTRLS.C
++++ b/WINDOWS/WINCTRLS.C
+@@ -132,8 +132,9 @@ void beginbox(struct ctlpos *cp, char *name, int idbox)
+ /*
+  * End a grouping box.
+  */
+-void endbox(struct ctlpos *cp)
++HWND endbox(struct ctlpos *cp)
+ {
++    HWND hwnd;
+     RECT r;
+     cp->xoff -= GAPXBOX;
+     cp->width += 2 * GAPXBOX;
+@@ -142,9 +143,10 @@ void endbox(struct ctlpos *cp)
+     r.right = cp->width;
+     r.top = cp->boxystart;
+     r.bottom = cp->ypos - cp->boxystart;
+-    doctl(cp, r, "BUTTON", BS_GROUPBOX | WS_CHILD | WS_VISIBLE, 0,
++    hwnd = doctl(cp, r, "BUTTON", BS_GROUPBOX | WS_CHILD | WS_VISIBLE, 0,
+ 	  cp->boxtext ? cp->boxtext : "", cp->boxid);
+     cp->ypos += GAPYBOX;
++    return hwnd;
+ }
+ 
+ /*
+diff --git a/WINDOWS/WINPGEN.C b/WINDOWS/WINPGEN.C
+index 33d76c6..4d710d1 100644
+--- a/WINDOWS/WINPGEN.C
++++ b/WINDOWS/WINPGEN.C
+@@ -11,6 +11,7 @@
+ 
+ #include "putty.h"
+ #include "ssh.h"
++#include "../leapmotion/windows/leappgen.h"
+ 
+ #include <commctrl.h>
+ 
+@@ -359,6 +360,10 @@ struct MainDlgState {
+     struct RSAKey key;
+     struct dss_key dsskey;
+     HMENU filemenu, keymenu, cvtmenu;
++    HWND box;
++    RECT draw_area;
++    HDC bkDC;
++    HBITMAP bitmap;
+ };
+ 
+ static void hidemany(HWND hwnd, const int *ids, int hideit)
+@@ -919,7 +924,12 @@ static int CALLBACK MainDlgProc(HWND hwnd, UINT msg,
+ 			   IDC_PASSPHRASE1EDIT, 75);
+ 	    staticpassedit(&cp, "C&onfirm passphrase:",
+ 			   IDC_PASSPHRASE2STATIC, IDC_PASSPHRASE2EDIT, 75);
+-	    endbox(&cp);
++	    {
++	        RECT r = {cp.xoff, cp2.ypos, cp.width, cp.ypos - 4 /* GAPYBOX */};
++	        MapDialogRect(hwnd, &r);
++	        state->draw_area = r;
++	    }
++	    state->box = endbox(&cp);
+ 	    beginbox(&cp, "Actions", IDC_BOX_ACTIONS);
+ 	    staticbtn(&cp, "Generate a public/private key pair",
+ 		      IDC_GENSTATIC, "&Generate", IDC_GENERATE);
+@@ -943,6 +953,19 @@ static int CALLBACK MainDlgProc(HWND hwnd, UINT msg,
+ 			   IDC_KEYSSH2RSA, MF_BYCOMMAND);
+ 	SetDlgItemInt(hwnd, IDC_BITS, DEFAULT_KEYSIZE, FALSE);
+ 
++
++	/* Initialize Leap Motion */
++	{
++	    HDC hdc = GetDC(hwnd);
++	    int w = state->draw_area.right - state->draw_area.left;
++	    int h = state->draw_area.bottom - state->draw_area.top;
++	    state->bkDC = CreateCompatibleDC(hdc);
++	    state->bitmap = CreateCompatibleBitmap(hdc, w, h);
++	    SelectObject(state->bkDC, state->bitmap);
++	    ReleaseDC(hwnd, hdc);
++	    initializeLeap(hwnd);
++	}
++
+ 	/*
+ 	 * Initially, hide the progress bar and the key display,
+ 	 * and show the no-key display. Also disable the Save
+@@ -961,7 +984,91 @@ static int CALLBACK MainDlgProc(HWND hwnd, UINT msg,
+         }
+ 
+ 	return 1;
+-      case WM_MOUSEMOVE:
++	case WM_LEAP_MOVED:
++		state = (struct MainDlgState *) GetWindowLongPtr(hwnd, GWLP_USERDATA);
++		if (state->collecting_entropy && state->entropy) {
++			LeapFingers fingers;
++			int count = getFingers(&fingers) ;
++			if (count) {
++				int w = state->draw_area.right - state->draw_area.left;
++				int  h = state->draw_area.bottom - state->draw_area.top;
++				RECT r = {0, 0, w, h};
++				HDC hdc = GetDC(state->box);
++
++				int required =  state->entropy_required - state->entropy_got;
++				int i = min(count + 1, required);
++				FillRect(state->bkDC, &r, (HBRUSH)(COLOR_BACKGROUND + 1));
++				printf("Moved: count=%d\n", count);
++				while (i) {
++					i--;
++					if  (i){
++						LeapPosition pos = fingers.data[i];
++						int x = (int)(pos.x * w);
++						int y = (int)((1.0 - pos.y) * h);
++						int left = x - 5;
++						int top = y - 5;
++						int right = x + 5;
++						int bottom = y + 5;
++						state->entropy[state->entropy_got++] = pos.reduced;
++						printf("%x(%d, %d, %d)\n", pos.reduced, pos.ix, pos.iy, pos.iz);
++						Ellipse(state->bkDC, left, top, right, bottom);
++					}
++					else {
++						state->entropy[state->entropy_got++] = GetMessageTime();
++					}
++				}
++
++				BitBlt(hdc, state->draw_area.left, state->draw_area.top, w, h, state->bkDC, 0, 0, SRCCOPY);
++				ReleaseDC(state->box, hdc);
++
++				SendDlgItemMessage(hwnd, IDC_PROGRESS, PBM_SETPOS,
++					state->entropy_got, 0);
++				if (state->entropy_got >= state->entropy_required) {
++					struct rsa_key_thread_params *params;
++					DWORD threadid;
++
++					stopLeap();
++
++					hdc = GetDC(state->box);
++					FillRect(state->bkDC, &r, (HBRUSH)(COLOR_BTNFACE+ 1));
++					BitBlt(hdc, state->draw_area.left, state->draw_area.top, w, h, state->bkDC, 0, 0, SRCCOPY);
++					ReleaseDC(state->box, hdc);
++					/*
++					* Seed the entropy pool
++					*/
++					random_add_heavynoise(state->entropy, state->entropy_size);
++					memset(state->entropy, 0, state->entropy_size);
++					sfree(state->entropy);
++					state->collecting_entropy = FALSE;
++
++					SetDlgItemText(hwnd, IDC_GENERATING, generating_msg);
++					SendDlgItemMessage(hwnd, IDC_PROGRESS, PBM_SETRANGE, 0,
++						MAKELPARAM(0, PROGRESSRANGE));
++					SendDlgItemMessage(hwnd, IDC_PROGRESS, PBM_SETPOS, 0, 0);
++
++					params = snew(struct rsa_key_thread_params);
++					params->progressbar = GetDlgItem(hwnd, IDC_PROGRESS);
++					params->dialog = hwnd;
++					params->keysize = state->keysize;
++					params->is_dsa = state->is_dsa;
++					params->key = &state->key;
++					params->dsskey = &state->dsskey;
++
++					if (!CreateThread(NULL, 0, generate_rsa_key_thread,
++						params, 0, &threadid)) {
++							MessageBox(hwnd, "Out of thread resources",
++								"Key generation error",
++								MB_OK | MB_ICONERROR);
++							sfree(params);
++					} else {
++						state->generation_thread_exists = TRUE;
++					}
++				}
++			}
++		}
++		break;
++
++    case WM_MOUSEMOVE:
+ 	state = (struct MainDlgState *) GetWindowLongPtr(hwnd, GWLP_USERDATA);
+ 	if (state->collecting_entropy &&
+ 	    state->entropy && state->entropy_got < state->entropy_required) {
+@@ -1107,6 +1214,8 @@ static int CALLBACK MainDlgProc(HWND hwnd, UINT msg,
+ 				       sizeof(unsigned));
+ 		state->entropy = snewn(state->entropy_required, unsigned);
+ 
++		startLeap();
++
+ 		SendDlgItemMessage(hwnd, IDC_PROGRESS, PBM_SETRANGE, 0,
+ 				   MAKELPARAM(0, state->entropy_required));
+ 		SendDlgItemMessage(hwnd, IDC_PROGRESS, PBM_SETPOS, 0, 0);
+@@ -1407,6 +1516,8 @@ static int CALLBACK MainDlgProc(HWND hwnd, UINT msg,
+         break;
+       case WM_CLOSE:
+ 	state = (struct MainDlgState *) GetWindowLongPtr(hwnd, GWLP_USERDATA);
++	DeleteObject(state->bitmap);
++	releaseLeap();
+ 	sfree(state);
+ 	quit_help(hwnd);
+ 	EndDialog(hwnd, 1);
+diff --git a/WINDOWS/WINSTUFF.H b/WINDOWS/WINSTUFF.H
+index 6571172..51cb9a1 100644
+--- a/WINDOWS/WINSTUFF.H
++++ b/WINDOWS/WINSTUFF.H
+@@ -327,7 +327,7 @@ HWND doctl(struct ctlpos *cp, RECT r,
+ 	   char *wclass, int wstyle, int exstyle, char *wtext, int wid);
+ void bartitle(struct ctlpos *cp, char *name, int id);
+ void beginbox(struct ctlpos *cp, char *name, int idbox);
+-void endbox(struct ctlpos *cp);
++HWND endbox(struct ctlpos *cp);
+ void editboxfw(struct ctlpos *cp, int password, char *text,
+ 	       int staticid, int editid);
+ void radioline(struct ctlpos *cp, char *text, int id, int nacross, ...);
+-- 
+1.8.3.msysgit.0
+
