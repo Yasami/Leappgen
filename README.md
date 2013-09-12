@@ -1,13 +1,12 @@
-Patches for puttygen to add Leap Motion support
+Patches for PuTTYgen to add Leap Motion support
 =================================================
 
 Demo
 -------------------------------------------------
 See Youtube movie.  
-This is a placeholder. It will be uploaded soon.
-<a href="http://www.youtube.com/watch?feature=player_embedded&v=YOUTUBE_VIDEO_ID_HERE
-" target="_blank"><img src="http://img.youtube.com/vi/YOUTUBE_VIDEO_ID_HERE/0.jpg" 
-alt="IMAGE ALT TEXT HERE" width="240" height="180" border="10" /></a>
+<a href="http://www.youtube.com/watch?feature=player_embedded&v=xA10UN25bik
+" target="_blank"><img src="http://img.youtube.com/vi/xA10UN25bik/0.jpg" 
+alt="IMAGE ALT TEXT HERE" width="320" height="180" border="10" /></a>
 
 Requirement
 -------------------------------------------------
