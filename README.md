@@ -23,8 +23,9 @@ How to build
  http://www.chiark.greenend.org.uk/~sgtatham/putty/download.html  
  (Source code -> Windows source code -> Release source code for Windows)
 2. Extract archive to local storage. 
-3. Set environment variable "LEAP_SDK" to point the "LeapSDK" directory of installed Leap Motion SDK.  (Not "LeapDeveloperKit" directory)  
-    Example:  (https://github.com/Yasami/Leappgen/raw/master/newenv.png "Set LEAP_SDK C:\Tools\LeapDeveloperKit\LeapSDK")
+3. Set environment variable "LEAP_SDK" to point the "LeapSDK" (not "LeapDeveloperKit") directory of installed Leap Motion SDK.    
+    Example:  
+    ![Set envrionment variable](https://github.com/Yasami/Leappgen/raw/master/newenv.png "Set LEAP_SDK C:\Tools\LeapDeveloperKit\LeapSDK")
 4. Open putty-src\WINDOWS\MSVC\PUTTYGEN\PUTTYGEN.sln by Visual Studio.
 5. Build and run.
 
