@@ -6,7 +6,7 @@ Demo
 See Youtube movie.  
 <a href="http://www.youtube.com/watch?feature=player_embedded&v=xA10UN25bik
 " target="_blank"><img src="http://img.youtube.com/vi/xA10UN25bik/0.jpg" 
-alt="IMAGE ALT TEXT HERE" width="320" height="180" border="10" /></a>
+alt="Demo movie" width="320" height="180" border="0" /></a>
 
 Requirement
 -------------------------------------------------
